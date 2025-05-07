@@ -57,6 +57,7 @@ target_sources(
         system/input_system.cpp
         system/rendering_system.cpp
 		system/movement_system.cpp
+		context/clock.cpp
 		testbed.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer3.cpp

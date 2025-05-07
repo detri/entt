@@ -10,13 +10,15 @@
 #include <component/renderable_component.h>
 #include <entt/entity/registry.hpp>
 
+#include <context/clock.h>
 #include <imgui.h>
 #include <meta/meta.h>
 #include <system/hud_system.h>
 #include <system/imgui_system.h>
 #include <system/input_system.h>
-#include <system/rendering_system.h>
 #include <system/movement_system.h>
+#include <system/rendering_system.h>
+#include "component/movement_component.h"
 
 namespace testbed {
 
@@ -66,10 +68,13 @@ application::~application() {
 static void static_setup_for_dev_purposes(entt::registry &registry) {
     const auto entt = registry.create();
 
+    registry.ctx().emplace<clock>();
+
     registry.emplace<input_listener_component>(entt);
     registry.emplace<position_component>(entt, SDL_FPoint{400.f, 400.f});
     registry.emplace<rect_component>(entt, SDL_FRect{0.f, 0.f, 20.f, 20.f});
     registry.emplace<renderable_component>(entt);
+    registry.emplace<movement_component>(entt, 100.f);
 }
 
 int application::run() {
@@ -83,6 +88,10 @@ int application::run() {
 
     while(!quit) {
         input(registry);
+
+        auto& ctx_clock = registry.ctx().get<clock>();
+        ctx_clock.tick();
+
         update(registry);
         draw(registry, context);
     }
