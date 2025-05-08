@@ -32,6 +32,20 @@ if(NOT imgui_POPULATED)
     set(imgui_INCLUDE_DIR ${imgui_SOURCE_DIR})
 endif()
 
+# Fetch Taskflow
+
+FetchContent_Declare(
+	taskflow
+	GIT_REPOSITORY https://github.com/taskflow/taskflow
+	GIT_TAG v3.10.0
+	GIT_SHALLOW 1
+)
+
+set(TF_BUILD_TESTS OFF CACHE BOOL "Disable taskflow tests" FORCE)
+set(TF_BUILD_EXAMPLES OFF CACHE BOOL "Disable taskflow examples" FORCE)
+
+FetchContent_MakeAvailable(taskflow)
+
 # Testbed executable
 
 add_executable(testbed)
@@ -73,6 +87,7 @@ target_link_libraries(
     PRIVATE
         EnTT::EnTT
         SDL3::SDL3
+		Taskflow::Taskflow
 )
 
 target_include_directories(
