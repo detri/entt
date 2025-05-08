@@ -43,7 +43,7 @@ void meta_setup() {
         .custom<entt::davey_data>("h");
 
     entt::meta_factory<renderable_component>()
-        .custom<entt::davey_data>("no data");
+        .custom<entt::davey_data>("renderable");
 
     // bind components...
 }

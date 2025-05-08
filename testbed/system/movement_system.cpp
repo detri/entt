@@ -1,34 +1,43 @@
 #pragma once
 
-#include <iostream>
 #include <system/movement_system.h>
 #include "component/movement_component.h"
 #include "component/position_component.h"
-#include "component/renderable_component.h"
 #include "context/clock.h"
 
 namespace testbed {
 
-void movement_system(entt::registry& registry) {
-    auto* key_down = SDL_GetKeyboardState(nullptr);
-    if(!key_down) {
+namespace {
+bool is_key_down(const bool *keys, SDL_Scancode code) {
+    if(keys == nullptr) {
+        return false;
+    }
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    return keys[code];
+}
+}
+
+void movement_system(entt::registry &registry) {
+    const auto *keys = SDL_GetKeyboardState(nullptr);
+    if(keys == nullptr) {
         return;
     }
 
     auto view = registry.view<position_component, movement_component>();
-    for (auto&& [ent, pos, movement] : view.each()) {
-        auto delta = registry.ctx().get<clock>().delta_time * movement.speed;
-        if (key_down[SDL_SCANCODE_W]) {
+    for(auto &&[ent, pos, movement]: view.each()) {
+        const auto delta = registry.ctx().get<clock>().delta() * movement.speed;
+
+        if(is_key_down(keys, SDL_SCANCODE_W)) {
             pos.y -= delta;
-        } else if (key_down[SDL_SCANCODE_S]) {
+        } else if(is_key_down(keys, SDL_SCANCODE_S)) {
             pos.y += delta;
         }
-        if (key_down[SDL_SCANCODE_A]) {
+        if(is_key_down(keys, SDL_SCANCODE_A)) {
             pos.x -= delta;
-        } else if (key_down[SDL_SCANCODE_D]) {
+        } else if(is_key_down(keys, SDL_SCANCODE_D)) {
             pos.x += delta;
         }
     }
 }
 
-}
+} // namespace testbed
