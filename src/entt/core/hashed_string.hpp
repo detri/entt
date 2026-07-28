@@ -1,3 +1,774 @@
+#ifndef RAPIDHASH_IMPL
+#define RAPIDHASH_IMPL
+
+#include <array>
+#include <bit>
+#include <concepts>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <memory>
+#include <string_view>
+#include <type_traits>
+
+#if defined(_MSC_VER)
+#  include <intrin.h>
+#  if defined(_M_X64) && !defined(_M_ARM64EC)
+#    pragma intrinsic(_umul128)
+#  endif
+#endif
+
+#if defined(_MSC_VER)
+#  define RAPIDHASH_ALWAYS_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#  define RAPIDHASH_ALWAYS_INLINE inline __attribute__((__always_inline__))
+#else
+#  define RAPIDHASH_ALWAYS_INLINE inline
+#endif
+
+#ifndef RAPIDHASH_UNROLLED
+#  define RAPIDHASH_COMPACT
+#elif defined(RAPIDHASH_COMPACT)
+#  error "RAPIDHASH_COMPACT and RAPIDHASH_UNROLLED cannot both be defined"
+#endif
+
+#ifndef RAPIDHASH_PROTECTED
+#  define RAPIDHASH_FAST
+#elif defined(RAPIDHASH_FAST)
+#  error "RAPIDHASH_FAST and RAPIDHASH_PROTECTED cannot both be defined"
+#endif
+
+namespace rapidhash
+{
+    inline constexpr std::uint64_t secret[8] = {
+        0x2d358dccaa6c78a5ULL,
+        0x8bb84b93962eacc9ULL,
+        0x4b33a62ed433d4a3ULL,
+        0x4d5a2da51de1aa47ULL,
+        0xa0761d6478bd642fULL,
+        0xe7037ed1a0b428dbULL,
+        0x90ed1765281c388cULL,
+        0xaaaaaaaaaaaaaaaaULL
+    };
+
+    namespace detail
+    {
+        template<class T>
+        concept byte_like =
+                std::same_as<std::remove_cv_t<T>, char> ||
+                std::same_as<std::remove_cv_t<T>, signed char> ||
+                std::same_as<std::remove_cv_t<T>, unsigned char> ||
+                std::same_as<std::remove_cv_t<T>, std::byte>;
+
+        template<byte_like Byte>
+        [[nodiscard]] constexpr std::uint8_t byte_value(Byte value) noexcept
+        {
+            if constexpr (std::same_as<std::remove_cv_t<Byte>, std::byte>)
+                return std::to_integer<std::uint8_t>(value);
+            else
+                return static_cast<std::uint8_t>(value);
+        }
+
+        template<byte_like Byte>
+        [[nodiscard]] constexpr std::uint64_t read32_constexpr(
+            const Byte* p) noexcept
+        {
+            return
+                    std::uint64_t{byte_value(p[0])} |
+                    (std::uint64_t{byte_value(p[1])} << 8) |
+                    (std::uint64_t{byte_value(p[2])} << 16) |
+                    (std::uint64_t{byte_value(p[3])} << 24);
+        }
+
+        template<byte_like Byte>
+        [[nodiscard]] constexpr std::uint64_t read64_constexpr(
+            const Byte* p) noexcept
+        {
+            return
+                    std::uint64_t{byte_value(p[0])} |
+                    (std::uint64_t{byte_value(p[1])} << 8) |
+                    (std::uint64_t{byte_value(p[2])} << 16) |
+                    (std::uint64_t{byte_value(p[3])} << 24) |
+                    (std::uint64_t{byte_value(p[4])} << 32) |
+                    (std::uint64_t{byte_value(p[5])} << 40) |
+                    (std::uint64_t{byte_value(p[6])} << 48) |
+                    (std::uint64_t{byte_value(p[7])} << 56);
+        }
+
+        template<byte_like Byte>
+        [[nodiscard]] RAPIDHASH_ALWAYS_INLINE constexpr std::uint64_t read32(
+            const Byte* p) noexcept
+        {
+            if (std::is_constant_evaluated())
+                return read32_constexpr(p);
+
+            if constexpr (std::endian::native == std::endian::little)
+            {
+                std::uint32_t value;
+                std::memcpy(&value, p, sizeof(value));
+                return value;
+            } else
+            {
+                return read32_constexpr(p);
+            }
+        }
+
+        template<byte_like Byte>
+        [[nodiscard]] RAPIDHASH_ALWAYS_INLINE constexpr std::uint64_t read64(
+            const Byte* p) noexcept
+        {
+            if (std::is_constant_evaluated())
+                return read64_constexpr(p);
+
+            if constexpr (std::endian::native == std::endian::little)
+            {
+                std::uint64_t value;
+                std::memcpy(&value, p, sizeof(value));
+                return value;
+            } else
+            {
+                return read64_constexpr(p);
+            }
+        }
+
+        struct uint128_parts
+        {
+            std::uint64_t low;
+            std::uint64_t high;
+        };
+
+        [[nodiscard]] constexpr uint128_parts multiply_portable(
+            const std::uint64_t lhs,
+            const std::uint64_t rhs) noexcept
+        {
+            const std::uint64_t lhs_high = lhs >> 32;
+            const std::uint64_t rhs_high = rhs >> 32;
+            const std::uint64_t lhs_low =
+                    static_cast<std::uint32_t>(lhs);
+            const std::uint64_t rhs_low =
+                    static_cast<std::uint32_t>(rhs);
+
+            const std::uint64_t high_high = lhs_high * rhs_high;
+            const std::uint64_t high_low = lhs_high * rhs_low;
+            const std::uint64_t low_high = rhs_high * lhs_low;
+            const std::uint64_t low_low = lhs_low * rhs_low;
+
+            const std::uint64_t middle0 =
+                    low_low + (high_low << 32);
+
+            std::uint64_t carry = middle0 < low_low;
+
+            const std::uint64_t low =
+                    middle0 + (low_high << 32);
+
+            carry += low < middle0;
+
+            const std::uint64_t high =
+                    high_high +
+                    (high_low >> 32) +
+                    (low_high >> 32) +
+                    carry;
+
+            return {low, high};
+        }
+
+        RAPIDHASH_ALWAYS_INLINE constexpr void apply_product(
+            std::uint64_t* lhs,
+            std::uint64_t* rhs,
+            const uint128_parts product) noexcept
+        {
+#if defined(RAPIDHASH_PROTECTED)
+            *lhs ^= product.low;
+            *rhs ^= product.high;
+#else
+            *lhs = product.low;
+            *rhs = product.high;
+#endif
+        }
+
+        RAPIDHASH_ALWAYS_INLINE constexpr void mum(
+            std::uint64_t* lhs,
+            std::uint64_t* rhs) noexcept
+        {
+            if (std::is_constant_evaluated())
+            {
+                apply_product(
+                    lhs,
+                    rhs,
+                    multiply_portable(*lhs, *rhs));
+
+                return;
+            }
+
+#if defined(__SIZEOF_INT128__)
+            const __uint128_t product =
+                    static_cast<__uint128_t>(*lhs) *
+                    static_cast<__uint128_t>(*rhs);
+
+            apply_product(lhs, rhs, {
+                              static_cast<std::uint64_t>(product),
+                              static_cast<std::uint64_t>(product >> 64)
+                          });
+#elif defined(_MSC_VER) && \
+      (defined(_WIN64) || defined(_M_HYBRID_CHPE_ARM64))
+#  if defined(_M_X64)
+            std::uint64_t high;
+            const std::uint64_t low =
+                    _umul128(*lhs, *rhs, &high);
+
+            apply_product(lhs, rhs, {low, high});
+#  else
+            const std::uint64_t low = *lhs * *rhs;
+            const std::uint64_t high = __umulh(*lhs, *rhs);
+
+            apply_product(lhs, rhs, {low, high});
+#  endif
+#else
+            apply_product(
+                lhs,
+                rhs,
+                multiply_portable(*lhs, *rhs));
+#endif
+        }
+
+        [[nodiscard]] RAPIDHASH_ALWAYS_INLINE constexpr std::uint64_t mix(
+            std::uint64_t lhs,
+            std::uint64_t rhs) noexcept
+        {
+            mum(&lhs, &rhs);
+            return lhs ^ rhs;
+        }
+
+        enum class variant
+        {
+            full,
+            micro,
+            nano
+        };
+
+        template<variant Variant, byte_like Byte>
+        [[nodiscard]] constexpr std::uint64_t hash_internal(
+            const Byte* p,
+            std::size_t len,
+            std::uint64_t seed_value,
+            const std::uint64_t* secret_value) noexcept
+        {
+            seed_value ^=
+                    mix(seed_value ^ secret_value[2], secret_value[1]);
+
+            std::uint64_t a = 0;
+            std::uint64_t b = 0;
+            std::size_t i = len;
+
+            if (len <= 16)
+            {
+                if (len >= 4)
+                {
+                    seed_value ^= len;
+
+                    if (len >= 8)
+                    {
+                        a = read64(p);
+                        b = read64(p + len - 8);
+                    } else
+                    {
+                        a = read32(p);
+                        b = read32(p + len - 4);
+                    }
+                } else if (len > 0)
+                {
+                    a =
+                            (static_cast<std::uint64_t>(
+                                 byte_value(p[0])) << 45) |
+                            byte_value(p[len - 1]);
+
+                    b = byte_value(p[len >> 1]);
+                }
+            } else
+            {
+                if constexpr (Variant == variant::full)
+                {
+                    if (len > 112)
+                    {
+                        std::uint64_t see1 = seed_value;
+                        std::uint64_t see2 = seed_value;
+                        std::uint64_t see3 = seed_value;
+                        std::uint64_t see4 = seed_value;
+                        std::uint64_t see5 = seed_value;
+                        std::uint64_t see6 = seed_value;
+
+#if defined(RAPIDHASH_COMPACT)
+                        do
+                        {
+                            seed_value = mix(
+                                read64(p) ^ secret_value[0],
+                                read64(p + 8) ^ seed_value);
+
+                            see1 = mix(
+                                read64(p + 16) ^ secret_value[1],
+                                read64(p + 24) ^ see1);
+
+                            see2 = mix(
+                                read64(p + 32) ^ secret_value[2],
+                                read64(p + 40) ^ see2);
+
+                            see3 = mix(
+                                read64(p + 48) ^ secret_value[3],
+                                read64(p + 56) ^ see3);
+
+                            see4 = mix(
+                                read64(p + 64) ^ secret_value[4],
+                                read64(p + 72) ^ see4);
+
+                            see5 = mix(
+                                read64(p + 80) ^ secret_value[5],
+                                read64(p + 88) ^ see5);
+
+                            see6 = mix(
+                                read64(p + 96) ^ secret_value[6],
+                                read64(p + 104) ^ see6);
+
+                            p += 112;
+                            i -= 112;
+                        } while (i > 112);
+#else
+                        while (i > 224)
+                        {
+                            seed_value = mix(
+                                read64(p) ^ secret_value[0],
+                                read64(p + 8) ^ seed_value);
+
+                            see1 = mix(
+                                read64(p + 16) ^ secret_value[1],
+                                read64(p + 24) ^ see1);
+
+                            see2 = mix(
+                                read64(p + 32) ^ secret_value[2],
+                                read64(p + 40) ^ see2);
+
+                            see3 = mix(
+                                read64(p + 48) ^ secret_value[3],
+                                read64(p + 56) ^ see3);
+
+                            see4 = mix(
+                                read64(p + 64) ^ secret_value[4],
+                                read64(p + 72) ^ see4);
+
+                            see5 = mix(
+                                read64(p + 80) ^ secret_value[5],
+                                read64(p + 88) ^ see5);
+
+                            see6 = mix(
+                                read64(p + 96) ^ secret_value[6],
+                                read64(p + 104) ^ see6);
+
+                            seed_value = mix(
+                                read64(p + 112) ^ secret_value[0],
+                                read64(p + 120) ^ seed_value);
+
+                            see1 = mix(
+                                read64(p + 128) ^ secret_value[1],
+                                read64(p + 136) ^ see1);
+
+                            see2 = mix(
+                                read64(p + 144) ^ secret_value[2],
+                                read64(p + 152) ^ see2);
+
+                            see3 = mix(
+                                read64(p + 160) ^ secret_value[3],
+                                read64(p + 168) ^ see3);
+
+                            see4 = mix(
+                                read64(p + 176) ^ secret_value[4],
+                                read64(p + 184) ^ see4);
+
+                            see5 = mix(
+                                read64(p + 192) ^ secret_value[5],
+                                read64(p + 200) ^ see5);
+
+                            see6 = mix(
+                                read64(p + 208) ^ secret_value[6],
+                                read64(p + 216) ^ see6);
+
+                            p += 224;
+                            i -= 224;
+                        }
+
+                        if (i > 112)
+                        {
+                            seed_value = mix(
+                                read64(p) ^ secret_value[0],
+                                read64(p + 8) ^ seed_value);
+
+                            see1 = mix(
+                                read64(p + 16) ^ secret_value[1],
+                                read64(p + 24) ^ see1);
+
+                            see2 = mix(
+                                read64(p + 32) ^ secret_value[2],
+                                read64(p + 40) ^ see2);
+
+                            see3 = mix(
+                                read64(p + 48) ^ secret_value[3],
+                                read64(p + 56) ^ see3);
+
+                            see4 = mix(
+                                read64(p + 64) ^ secret_value[4],
+                                read64(p + 72) ^ see4);
+
+                            see5 = mix(
+                                read64(p + 80) ^ secret_value[5],
+                                read64(p + 88) ^ see5);
+
+                            see6 = mix(
+                                read64(p + 96) ^ secret_value[6],
+                                read64(p + 104) ^ see6);
+
+                            p += 112;
+                            i -= 112;
+                        }
+#endif
+
+                        seed_value ^= see1;
+                        see2 ^= see3;
+                        see4 ^= see5;
+                        seed_value ^= see6;
+                        see2 ^= see4;
+                        seed_value ^= see2;
+                    }
+                } else if constexpr (Variant == variant::micro)
+                {
+                    if (i > 80)
+                    {
+                        std::uint64_t see1 = seed_value;
+                        std::uint64_t see2 = seed_value;
+                        std::uint64_t see3 = seed_value;
+                        std::uint64_t see4 = seed_value;
+
+                        do
+                        {
+                            seed_value = mix(
+                                read64(p) ^ secret_value[0],
+                                read64(p + 8) ^ seed_value);
+
+                            see1 = mix(
+                                read64(p + 16) ^ secret_value[1],
+                                read64(p + 24) ^ see1);
+
+                            see2 = mix(
+                                read64(p + 32) ^ secret_value[2],
+                                read64(p + 40) ^ see2);
+
+                            see3 = mix(
+                                read64(p + 48) ^ secret_value[3],
+                                read64(p + 56) ^ see3);
+
+                            see4 = mix(
+                                read64(p + 64) ^ secret_value[4],
+                                read64(p + 72) ^ see4);
+
+                            p += 80;
+                            i -= 80;
+                        } while (i > 80);
+
+                        seed_value ^= see1;
+                        see2 ^= see3;
+                        seed_value ^= see4;
+                        seed_value ^= see2;
+                    }
+                } else
+                {
+                    if (i > 48)
+                    {
+                        std::uint64_t see1 = seed_value;
+                        std::uint64_t see2 = seed_value;
+
+                        do
+                        {
+                            seed_value = mix(
+                                read64(p) ^ secret_value[0],
+                                read64(p + 8) ^ seed_value);
+
+                            see1 = mix(
+                                read64(p + 16) ^ secret_value[1],
+                                read64(p + 24) ^ see1);
+
+                            see2 = mix(
+                                read64(p + 32) ^ secret_value[2],
+                                read64(p + 40) ^ see2);
+
+                            p += 48;
+                            i -= 48;
+                        } while (i > 48);
+
+                        seed_value ^= see1;
+                        seed_value ^= see2;
+                    }
+                }
+
+                if (i > 16)
+                {
+                    seed_value = mix(
+                        read64(p) ^ secret_value[2],
+                        read64(p + 8) ^ seed_value);
+
+                    if (i > 32)
+                    {
+                        seed_value = mix(
+                            read64(p + 16) ^ secret_value[2],
+                            read64(p + 24) ^ seed_value);
+
+                        if constexpr (Variant != variant::nano)
+                        {
+                            if (i > 48)
+                            {
+                                seed_value = mix(
+                                    read64(p + 32) ^ secret_value[1],
+                                    read64(p + 40) ^ seed_value);
+
+                                if (i > 64)
+                                {
+                                    seed_value = mix(
+                                        read64(p + 48) ^ secret_value[1],
+                                        read64(p + 56) ^ seed_value);
+                                }
+                            }
+                        }
+
+                        if constexpr (Variant == variant::full)
+                        {
+                            if (i > 80)
+                            {
+                                seed_value = mix(
+                                    read64(p + 64) ^ secret_value[2],
+                                    read64(p + 72) ^ seed_value);
+
+                                if (i > 96)
+                                {
+                                    seed_value = mix(
+                                        read64(p + 80) ^ secret_value[1],
+                                        read64(p + 88) ^ seed_value);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                a = read64(p + i - 16) ^ i;
+                b = read64(p + i - 8);
+            }
+
+            a ^= secret_value[1];
+            b ^= seed_value;
+
+            mum(&a, &b);
+
+            return mix(
+                a ^ secret_value[7],
+                b ^ secret_value[1] ^ i);
+        }
+    }
+
+    template<detail::byte_like Byte>
+    [[nodiscard]] constexpr std::uint64_t rapidhash_with_seed(
+        const Byte* key,
+        std::size_t len,
+        std::uint64_t seed_value) noexcept
+    {
+        return detail::hash_internal<detail::variant::full>(
+            key,
+            len,
+            seed_value,
+            secret);
+    }
+
+    template<detail::byte_like Byte>
+    [[nodiscard]] constexpr std::uint64_t rapidhash_micro_with_seed(
+        const Byte* key,
+        std::size_t len,
+        std::uint64_t seed_value) noexcept
+    {
+        return detail::hash_internal<detail::variant::micro>(
+            key,
+            len,
+            seed_value,
+            secret);
+    }
+
+    template<detail::byte_like Byte>
+    [[nodiscard]] constexpr std::uint64_t rapidhash_nano_with_seed(
+        const Byte* key,
+        std::size_t len,
+        std::uint64_t seed_value) noexcept
+    {
+        return detail::hash_internal<detail::variant::nano>(
+            key,
+            len,
+            seed_value,
+            secret);
+    }
+
+    [[nodiscard]] inline std::uint64_t rapidhash_with_seed(
+        const void* key,
+        const std::size_t len,
+        const std::uint64_t seed_value) noexcept
+    {
+        return detail::hash_internal<detail::variant::full>(
+            static_cast<const unsigned char*>(key),
+            len,
+            seed_value,
+            secret);
+    }
+
+    [[nodiscard]] inline std::uint64_t rapidhash_micro_with_seed(
+        const void* key,
+        const std::size_t len,
+        const std::uint64_t seed_value) noexcept
+    {
+        return detail::hash_internal<detail::variant::micro>(
+            static_cast<const unsigned char*>(key),
+            len,
+            seed_value,
+            secret);
+    }
+
+    [[nodiscard]] inline std::uint64_t rapidhash_nano_with_seed(
+        const void* key,
+        const std::size_t len,
+        const std::uint64_t seed_value) noexcept
+    {
+        return detail::hash_internal<detail::variant::nano>(
+            static_cast<const unsigned char*>(key),
+            len,
+            seed_value,
+            secret);
+    }
+
+    template<detail::byte_like Byte>
+    [[nodiscard]] constexpr std::uint64_t rapidhash(
+        const Byte* key,
+        const std::size_t len) noexcept
+    {
+        return rapidhash_with_seed(key, len, 0);
+    }
+
+    template<detail::byte_like Byte>
+    [[nodiscard]] constexpr std::uint64_t rapidhash_micro(
+        const Byte* key,
+        const std::size_t len) noexcept
+    {
+        return rapidhash_micro_with_seed(key, len, 0);
+    }
+
+    template<detail::byte_like Byte>
+    [[nodiscard]] constexpr std::uint64_t rapidhash_nano(
+        const Byte* key,
+        const std::size_t len) noexcept
+    {
+        return rapidhash_nano_with_seed(key, len, 0);
+    }
+
+    [[nodiscard]] inline std::uint64_t rapidhash(
+        const void* key,
+        const std::size_t len) noexcept
+    {
+        return rapidhash_with_seed(key, len, 0);
+    }
+
+    [[nodiscard]] inline std::uint64_t rapidhash_micro(
+        const void* key,
+        const std::size_t len) noexcept
+    {
+        return rapidhash_micro_with_seed(key, len, 0);
+    }
+
+    [[nodiscard]] inline std::uint64_t rapidhash_nano(
+        const void* key,
+        const std::size_t len) noexcept
+    {
+        return rapidhash_nano_with_seed(key, len, 0);
+    }
+
+    [[nodiscard]] constexpr std::uint64_t rapidhash(
+        const std::string_view value) noexcept
+    {
+        return rapidhash(value.data(), value.size());
+    }
+
+    [[nodiscard]] constexpr std::uint64_t rapidhash_micro(
+        const std::string_view value) noexcept
+    {
+        return rapidhash_micro(value.data(), value.size());
+    }
+
+    [[nodiscard]] constexpr std::uint64_t rapidhash_nano(
+        const std::string_view value) noexcept
+    {
+        return rapidhash_nano(value.data(), value.size());
+    }
+
+    template<std::size_t N>
+    [[nodiscard]] constexpr std::uint64_t rapidhash(
+        const char (&value)[N]) noexcept
+    {
+        static_assert(N > 0);
+        return rapidhash(value, N - 1);
+    }
+
+    template<std::size_t N>
+    [[nodiscard]] constexpr std::uint64_t rapidhash_micro(
+        const char (&value)[N]) noexcept
+    {
+        static_assert(N > 0);
+        return rapidhash_micro(value, N - 1);
+    }
+
+    template<std::size_t N>
+    [[nodiscard]] constexpr std::uint64_t rapidhash_nano(
+        const char (&value)[N]) noexcept
+    {
+        static_assert(N > 0);
+        return rapidhash_nano(value, N - 1);
+    }
+
+    template<class T>
+        requires (
+            std::is_trivially_copyable_v<T> &&
+            std::has_unique_object_representations_v<T>)
+    struct rapidhash_t
+    {
+        [[nodiscard]] constexpr std::size_t operator()(
+            const T& value) const noexcept
+        {
+            if (std::is_constant_evaluated())
+            {
+                const auto bytes =
+                        std::bit_cast<
+                            std::array<std::byte, sizeof(T)> >(value);
+
+                return rapidhash(bytes.data(), bytes.size());
+            }
+
+            return rapidhash(static_cast<const void*>(std::addressof(value)), sizeof(value));
+        }
+    };
+
+    struct string_hash
+    {
+        using is_avalanching = void;
+        using is_transparent = void;
+
+        [[nodiscard]] constexpr std::size_t operator()(
+            const std::string_view value) const noexcept
+        {
+            return rapidhash(value);
+        }
+    };
+}
+
+#undef RAPIDHASH_ALWAYS_INLINE
+#endif // RAPIDHASH_IMPL
+
 #ifndef ENTT_CORE_HASHED_STRING_HPP
 #define ENTT_CORE_HASHED_STRING_HPP
 
