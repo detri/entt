@@ -39,7 +39,7 @@
 
 #ifndef ENTT_ID_TYPE
 #    include "../stl/cstdint.hpp"
-#    define ENTT_ID_TYPE stl::uint64_t
+#    define ENTT_ID_TYPE stl::uint32_t
 #else
 #    include "../stl/cstdint.hpp" // provides coverage for types in the std namespace
 #endif
