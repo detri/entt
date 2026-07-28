@@ -110,40 +110,30 @@ TEST_F(HashedString, Correctness) {
 
 TEST_F(HashedString, Order) {
     using namespace entt::literals;
-    const entt::hashed_string lhs = "bar"_hs;
-    const entt::hashed_string rhs = "foo"_hs;
+
+    const entt::hashed_string lhs = "foo"_hs;
+    const entt::hashed_string rhs = "bar"_hs;
+
+    ASSERT_EQ(lhs < rhs, lhs.value() < rhs.value());
+    ASSERT_EQ(lhs <= rhs, lhs.value() <= rhs.value());
+    ASSERT_EQ(lhs > rhs, lhs.value() > rhs.value());
+    ASSERT_EQ(lhs >= rhs, lhs.value() >= rhs.value());
 
     ASSERT_FALSE(lhs < lhs);
-    ASSERT_FALSE(rhs < rhs);
-
-    ASSERT_LT(rhs, lhs);
-    ASSERT_LE(rhs, lhs);
-
-    ASSERT_GT(lhs, rhs);
-    ASSERT_GE(lhs, rhs);
+    ASSERT_TRUE(lhs <= lhs);
+    ASSERT_FALSE(lhs > lhs);
+    ASSERT_TRUE(lhs >= lhs);
 }
 
 TEST_F(HashedString, Constexprness) {
     using namespace entt::literals;
-    constexpr std::string_view view{"foobar__", 6};
+    constexpr entt::hashed_string lhs = "foo"_hs;
+    constexpr entt::hashed_string rhs = "bar"_hs;
 
-    ASSERT_EQ(entt::hashed_string{"quux"}, "quux"_hs);
-    ASSERT_EQ(entt::hashed_string{"foobar"}, expected);
-
-    ASSERT_EQ(entt::hashed_string::value("quux"), "quux"_hs);
-    ASSERT_EQ(entt::hashed_string::value("foobar"), expected);
-
-    ASSERT_EQ((entt::hashed_string{"quux", 4}), "quux"_hs);
-    ASSERT_EQ((entt::hashed_string{view.data(), view.size()}), expected);
-
-    ASSERT_EQ((entt::hashed_string::value("quux", 4)), "quux"_hs);
-    ASSERT_EQ((entt::hashed_string::value(view.data(), view.size())), expected);
-
-    ASSERT_LT(entt::hashed_string{"foo"}, "bar"_hs);
-    ASSERT_LE(entt::hashed_string{"bar"}, "bar"_hs);
-
-    ASSERT_GT(entt::hashed_string{"bar"}, "foo"_hs);
-    ASSERT_GE(entt::hashed_string{"foo"}, "foo"_hs);
+    static_assert((lhs < rhs) == (lhs.value() < rhs.value()));
+    static_assert((lhs <= rhs) == (lhs.value() <= rhs.value()));
+    static_assert((lhs > rhs) == (lhs.value() > rhs.value()));
+    static_assert((lhs >= rhs) == (lhs.value() >= rhs.value()));
 }
 
 TEST_F(HashedWString, DeductionGuide) {
@@ -209,38 +199,29 @@ TEST_F(HashedWString, Correctness) {
 
 TEST_F(HashedWString, Order) {
     using namespace entt::literals;
-    const entt::hashed_wstring lhs = L"bar"_hws;
-    const entt::hashed_wstring rhs = L"foo"_hws;
+
+    const entt::hashed_wstring lhs = L"foo"_hws;
+    const entt::hashed_wstring rhs = L"bar"_hws;
+
+    ASSERT_EQ(lhs < rhs, lhs.value() < rhs.value());
+    ASSERT_EQ(lhs <= rhs, lhs.value() <= rhs.value());
+    ASSERT_EQ(lhs > rhs, lhs.value() > rhs.value());
+    ASSERT_EQ(lhs >= rhs, lhs.value() >= rhs.value());
 
     ASSERT_FALSE(lhs < lhs);
-    ASSERT_FALSE(rhs < rhs);
-
-    ASSERT_LT(rhs, lhs);
-    ASSERT_LE(rhs, lhs);
-
-    ASSERT_GT(lhs, rhs);
-    ASSERT_GE(lhs, rhs);
+    ASSERT_TRUE(lhs <= lhs);
+    ASSERT_FALSE(lhs > lhs);
+    ASSERT_TRUE(lhs >= lhs);
 }
 
 TEST_F(HashedWString, Constexprness) {
     using namespace entt::literals;
-    constexpr std::wstring_view view{L"foobar__", 6};
 
-    ASSERT_EQ(entt::hashed_wstring{L"quux"}, L"quux"_hws);
-    ASSERT_EQ(entt::hashed_wstring{L"foobar"}, expected_wide);
+    constexpr entt::hashed_wstring lhs = L"foo"_hws;
+    constexpr entt::hashed_wstring rhs = L"bar"_hws;
 
-    ASSERT_EQ(entt::hashed_wstring::value(L"quux"), L"quux"_hws);
-    ASSERT_EQ(entt::hashed_wstring::value(L"foobar"), expected_wide);
-
-    ASSERT_EQ((entt::hashed_wstring{L"quux", 4}), L"quux"_hws);
-    ASSERT_EQ((entt::hashed_wstring{view.data(), view.size()}), expected_wide);
-
-    ASSERT_EQ((entt::hashed_wstring::value(L"quux", 4)), L"quux"_hws);
-    ASSERT_EQ((entt::hashed_wstring::value(view.data(), view.size())), expected_wide);
-
-    ASSERT_LT(entt::hashed_wstring{L"foo"}, L"bar"_hws);
-    ASSERT_LE(entt::hashed_wstring{L"bar"}, L"bar"_hws);
-
-    ASSERT_GT(entt::hashed_wstring{L"bar"}, L"foo"_hws);
-    ASSERT_GE(entt::hashed_wstring{L"foo"}, L"foo"_hws);
+    static_assert((lhs < rhs) == (lhs.value() < rhs.value()));
+    static_assert((lhs <= rhs) == (lhs.value() <= rhs.value()));
+    static_assert((lhs > rhs) == (lhs.value() > rhs.value()));
+    static_assert((lhs >= rhs) == (lhs.value() >= rhs.value()));
 }
