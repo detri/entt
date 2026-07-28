@@ -4,9 +4,34 @@
 #include <gtest/gtest.h>
 #include <entt/core/hashed_string.hpp>
 
+template<typename Type>
+[[nodiscard]] static consteval Type adapt_hash(
+    const std::uint64_t hash) noexcept
+{
+    if constexpr(sizeof(Type) == sizeof(std::uint32_t)) {
+        return static_cast<Type>(hash ^ (hash >> 32u));
+    } else {
+        return static_cast<Type>(hash);
+    }
+}
+
 struct BasicHashedString: ::testing::Test {
-    static constexpr entt::hashed_string::hash_type expected = rapidhash::rapidhash_micro("foobar");
-    static constexpr entt::hashed_string::hash_type expected_wide = rapidhash::rapidhash_micro(L"foobar");
+
+    using hash_type = entt::hashed_string::hash_type;
+
+    static constexpr hash_type expected =
+        adapt_hash<hash_type>(
+            rapidhash::rapidhash_micro("foobar", 6u));
+
+    static constexpr hash_type expected_empty =
+        adapt_hash<hash_type>(
+            rapidhash::rapidhash_micro("", 0u));
+
+    using wide_hash_type = entt::hashed_wstring::hash_type;
+
+    static constexpr wide_hash_type expected_wide =
+        adapt_hash<wide_hash_type>(
+            rapidhash::rapidhash_micro(L"foobar", 6u));
 };
 
 using HashedString = BasicHashedString;
@@ -62,7 +87,7 @@ TEST_F(HashedString, Empty) {
     const entt::hashed_string hs{};
 
     ASSERT_EQ(hs.size(), 0u);
-    ASSERT_EQ(static_cast<hash_type>(hs), rapidhash::rapidhash_micro("", 0));
+    ASSERT_EQ(static_cast<hash_type>(hs), expected_empty);
     ASSERT_EQ(static_cast<const char *>(hs), nullptr);
 }
 
@@ -161,7 +186,7 @@ TEST_F(HashedWString, Empty) {
     const entt::hashed_wstring hws{};
 
     ASSERT_EQ(hws.size(), 0u);
-    ASSERT_EQ(static_cast<hash_type>(hws), rapidhash::rapidhash_micro(L"", 0));
+    ASSERT_EQ(static_cast<hash_type>(hws), expected_empty);
     ASSERT_EQ(static_cast<const wchar_t *>(hws), nullptr);
 }
 
